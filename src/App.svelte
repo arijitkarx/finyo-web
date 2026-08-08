@@ -1,17 +1,22 @@
 <script lang="ts">
+  import AccountsPage from '$components/AccountsPage.svelte';
   import AuthPanel from '$components/AuthPanel.svelte';
+  import BucketsPage from '$components/BucketsPage.svelte';
   import BudgetPage from '$components/BudgetPage.svelte';
   import Dashboard from '$components/Dashboard.svelte';
   import LandingPage from '$components/LandingPage.svelte';
   import ProfilePage from '$components/ProfilePage.svelte';
+  import RecurringPage from '$components/RecurringPage.svelte';
+  import RulesPage from '$components/RulesPage.svelte';
   import Sidebar from '$components/Sidebar.svelte';
   import TransactionList from '$components/TransactionList.svelte';
-  import { authStore, currentViewStore, darkModeStore, persistTheme, transactionsStore } from '$lib/stores';
+  import { authStore, currentViewStore, darkModeStore, fetchCurrentUser, persistTheme, transactionsStore } from '$lib/stores';
+  import { consumeOAuthSession } from '$lib/api';
+  import type { View } from '$lib/stores';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
 
-  let currentView: 'landing' | 'login' | 'signup' | 'forgot' | 'dashboard' | 'transactions' | 'budgets' | 'profile' = 'landing';
-  let token: string | null = null;
+  let currentView: View = 'landing';
   let authenticated = false;
 
   const unsubscribeView = currentViewStore.subscribe(value => {
@@ -19,21 +24,29 @@
   });
 
   const unsubscribeAuth = authStore.subscribe(value => {
-    token = value.token;
-    authenticated = Boolean(value.token);
+    authenticated = Boolean(value.isLoggedIn || value.token);
   });
 
   const unsubscribeTheme = darkModeStore.subscribe(value => {
     persistTheme(value);
   });
 
-  onMount(async () => {
+  onMount(() => {
     const storedTheme = get(darkModeStore);
     persistTheme(storedTheme);
 
-    if (token) {
-      currentViewStore.set('dashboard');
-      await transactionsStore.fetchTransactions();
+    consumeOAuthSession();
+
+    const { isLoggedIn, token } = get(authStore);
+    if (isLoggedIn || token) {
+      fetchCurrentUser().then(user => {
+        if (user || isLoggedIn) {
+          currentViewStore.set('dashboard');
+          transactionsStore.fetchTransactions();
+        } else {
+          currentViewStore.set('landing');
+        }
+      });
     } else if (currentView !== 'login' && currentView !== 'signup' && currentView !== 'forgot') {
       currentViewStore.set('landing');
     }
@@ -81,6 +94,14 @@
             <TransactionList />
           {:else if currentView === 'budgets'}
             <BudgetPage />
+          {:else if currentView === 'accounts'}
+            <AccountsPage />
+          {:else if currentView === 'buckets'}
+            <BucketsPage />
+          {:else if currentView === 'recurring'}
+            <RecurringPage />
+          {:else if currentView === 'rules'}
+            <RulesPage />
           {:else if currentView === 'profile'}
             <ProfilePage />
           {:else}

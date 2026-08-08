@@ -66,33 +66,43 @@ npm run build
 
 ### Backend API
 
-Finyo connects to a backend API running at `http://localhost:5000`. The API proxy is configured in `vite.config.js`.
+Finyo connects to a backend API running at `http://localhost:5000` (set `VITE_API_BASE_URL` in `.env.local`; the dev server also proxies `/api`). The API prefix is `/api` and the full client reference lives in `FRONTEND_API_DOCS.md`.
 
-**API Endpoints Used:**
+**Auth:** the backend sets `authToken` (httpOnly) / `refreshToken` / `isLoggedIn` cookies on login and register. The web app sends `credentials: 'include'` on every request; on a `401`/`403` it refreshes the session via Supabase (`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`) and retries once.
 
-- `POST /api/auth/login` - User login
-- `POST /api/auth/register` - User registration
-- `GET /api/transactions/transactions` - Get transactions list
-- `POST /api/transactions` - Create transaction
-- `PUT /api/transactions/:id` - Update transaction
-- `DELETE /api/transactions/:id` - Delete transaction
-- `GET /api/transactions/dashboard` - Get dashboard stats
-- `GET /api/budgets` - Get budgets
-- `POST /api/budgets` - Create budget
+**Endpoints used:**
+
+- `POST /api/auth/login`, `POST /api/auth/register`, `GET /api/auth/oauth/:provider`, `POST /api/auth/logout`, `GET /api/auth/me`
+- `GET /api/transactions/transactions` (paged + filtered), `POST /api/transactions`, `POST /api/transactions/transfer`, `PUT/DELETE /api/transactions/:id`, `GET /api/transactions/dashboard`
+- `GET /api/financial/safe-to-spend`, `GET /api/financial/daily-allowance`
+- `GET/POST /api/budgets/summary|alerts|plans`, `POST /api/budgets/plans`, `PUT/DELETE /api/budgets/plans/:id`
+- `GET/POST /api/accounts`, `DELETE /api/accounts/:id`
+- `GET/POST /api/buckets`, `GET /api/buckets/:id/balance`, `POST /api/buckets/:id/allocations`
+- `GET/POST /api/recurring`, `POST /api/recurring/auto-fund`, `GET /api/recurring/upcoming`
+- `GET/POST /api/rules`, `POST /api/rules/:id/test`
+- `POST /api/ingestion/events` (SMS import)
 
 ## Project Structure
 
 ```
 src/
-├── components/        # Svelte components
+├── components/        # Svelte components (pages + modals)
 │   ├── App.svelte
 │   ├── Sidebar.svelte
-│   ├── Dashboard.svelte
-│   ├── TransactionList.svelte
-│   └── AddTransaction.svelte
+│   ├── Dashboard.svelte       # stats + safe-to-spend + daily allowance
+│   ├── TransactionList.svelte # paged ledger + SMS import
+│   ├── AddTransaction.svelte  # create/edit + transfers
+│   ├── BudgetPage.svelte      # budget plans + summary + alerts
+│   ├── BucketsPage.svelte     # envelope buckets + allocations
+│   ├── RecurringPage.svelte   # sinking funds + auto-fund
+│   ├── RulesPage.svelte       # auto-classification rules
+│   ├── AccountsPage.svelte    # financial accounts CRUD
+│   └── ...                    # modal form components
 ├── lib/
-│   ├── stores.ts      # Svelte stores for state management
-│   └── types.ts       # TypeScript type definitions
+│   ├── api.ts          # API client (cookies, error/issue parsing, 401 refresh)
+│   ├── stores.ts       # Svelte stores for state management
+│   ├── types.ts        # TypeScript types matching the backend API
+│   └── storage.ts      # safe localStorage helpers
 ├── main.ts            # Application entry point
 └── app.css            # Global styles with Tailwind directives
 ```

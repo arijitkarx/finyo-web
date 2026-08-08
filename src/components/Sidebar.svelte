@@ -1,19 +1,18 @@
 <script lang="ts">
-  import { currentViewStore, authStore, darkModeStore, persistTheme, persistAuthToken } from '$lib/stores';
+  import { authStore, currentViewStore, darkModeStore, logout, persistTheme } from '$lib/stores';
+  import type { View } from '$lib/stores';
   import { get } from 'svelte/store';
 
-  const menuItems = [
+  const menuItems: Array<{ name: string; icon: string; view: View }> = [
     { name: 'Dashboard', icon: '📊', view: 'dashboard' },
     { name: 'Transactions', icon: '💳', view: 'transactions' },
     { name: 'Budgets', icon: '💰', view: 'budgets' },
+    { name: 'Buckets', icon: '🪣', view: 'buckets' },
+    { name: 'Sinking funds', icon: '⏳', view: 'recurring' },
+    { name: 'Rules', icon: '⚙️', view: 'rules' },
+    { name: 'Accounts', icon: '🏦', view: 'accounts' },
     { name: 'Profile', icon: '👤', view: 'profile' },
   ];
-
-  function logout() {
-    authStore.set({ token: null, user: null });
-    persistAuthToken(null);
-    currentViewStore.set('landing');
-  }
 
   function toggleTheme() {
     const nextValue = !get(darkModeStore);
@@ -21,7 +20,7 @@
     persistTheme(nextValue);
   }
 
-  function navigateTo(view: any) {
+  function navigateTo(view: View) {
     currentViewStore.set(view);
   }
 </script>
@@ -34,7 +33,7 @@
   </div>
 
   <!-- Menu Items -->
-  <nav class="flex-1 p-4">
+  <nav class="flex-1 overflow-y-auto p-4">
     <ul class="space-y-2">
       {#each menuItems as item}
         <li>
@@ -81,7 +80,7 @@
 
 <nav class="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-slate-950/95 px-2 py-2 text-slate-100 shadow-2xl shadow-slate-950/50 backdrop-blur-xl md:hidden">
   <ul class="grid grid-cols-4 gap-1">
-    {#each menuItems as item}
+    {#each menuItems.slice(0, 8) as item}
       <li>
         <button
           on:click={() => navigateTo(item.view)}

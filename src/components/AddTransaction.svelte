@@ -1,56 +1,113 @@
 <script lang="ts">
-  import { transactionsStore } from '$lib/stores';
-  import type { Transaction } from '$lib/types';
-  import { createEventDispatcher } from 'svelte';
+  import { accountsStore, bucketsStore, categoriesStore, merchantsStore, transactionsStore } from '$lib/stores';
+  import type { Account, Bucket, Category, Merchant, Transaction, TransactionType } from '$lib/types';
+  import { createEventDispatcher, onMount } from 'svelte';
 
   const dispatch = createEventDispatcher();
 
   export let transaction: Partial<Transaction> | null = null;
   export let mode: 'create' | 'edit' = 'create';
 
+  let accounts: Account[] = [];
+  let categories: Category[] = [];
+  let buckets: Bucket[] = [];
+  let merchants: Merchant[] = [];
+
   let formData = {
     amount: '',
-    type: 'expense',
-    category: 'Food',
+    type: 'expense' as TransactionType,
+    direction: 'debit',
+    categoryId: '',
+    accountId: '',
+    bucketId: '',
+    merchantId: '',
     mode: 'UPI',
-    source: 'manual',
-    secondPartyId: '',
     notes: '',
     tags: '',
+    createdAt: '',
+    fromAccountId: '',
+    toAccountId: '',
   };
 
   let isSubmitting = false;
   let error = '';
 
-  $: if (transaction) {
+  const modes = ['UPI', 'Card', 'Cash', 'Bank Transfer', 'Wallet'];
+
+  $: isTransfer = formData.type === 'transfer';
+
+  $: if (transaction && transaction.id) {
     formData = {
       amount: transaction.amount?.toString() ?? '',
       type: transaction.type ?? 'expense',
-      category: transaction.category ?? 'Food',
+      direction: transaction.direction ?? (transaction.type === 'income' ? 'credit' : 'debit'),
+      categoryId: transaction.categoryId ?? '',
+      accountId: transaction.accountId ?? '',
+      bucketId: transaction.bucketId ?? '',
+      merchantId: transaction.merchantId ?? '',
       mode: transaction.mode ?? 'UPI',
-      source: transaction.source ?? 'manual',
-      secondPartyId: transaction.secondPartyId ?? '',
       notes: transaction.notes ?? '',
       tags: Array.isArray(transaction.tags) ? transaction.tags.join(', ') : '',
+      createdAt: transaction.date ? transaction.date.slice(0, 10) : '',
+      fromAccountId: '',
+      toAccountId: '',
     };
   }
 
-  const categories = [
-    'Food',
-    'Transportation',
-    'Entertainment',
-    'Shopping',
-    'Utilities',
-    'Healthcare',
-    'Education',
-    'Other',
-  ];
+  onMount(async () => {
+    try {
+      const [acc, cats, bcks, merch] = await Promise.all([
+        accountsStore.fetchAll(),
+        categoriesStore.fetchAll(),
+        bucketsStore.fetchAll(),
+        merchantsStore.fetchAll(),
+      ]);
+      accounts = acc.filter(a => a.isActive);
+      categories = cats;
+      buckets = bcks.filter(b => b.isActive);
+      merchants = merch;
+    } catch (fetchError) {
+      console.error('Failed to load reference data:', fetchError);
+    }
+  });
 
-  const modes = ['UPI', 'Card', 'Cash', 'Bank Transfer', 'Wallet'];
+  function handleTypeChange() {
+    formData.direction = formData.type === 'income' || formData.type === 'refund' ? 'credit' : 'debit';
+  }
 
   async function handleSubmit() {
-    if (!formData.amount || !formData.secondPartyId) {
-      error = 'Please fill in all required fields';
+    if (isTransfer) {
+      if (!formData.fromAccountId || !formData.toAccountId || !formData.amount) {
+        error = 'Please provide both accounts and an amount for the transfer';
+        return;
+      }
+
+      if (formData.fromAccountId === formData.toAccountId) {
+        error = 'From and to accounts must be different';
+        return;
+      }
+
+      isSubmitting = true;
+      error = '';
+      try {
+        await transactionsStore.transfer({
+          fromAccountId: formData.fromAccountId,
+          toAccountId: formData.toAccountId,
+          amount: parseFloat(formData.amount),
+          occurredAt: formData.createdAt ? new Date(formData.createdAt).toISOString() : undefined,
+          notes: formData.notes || undefined,
+        });
+        dispatch('save');
+      } catch (err) {
+        error = err instanceof Error ? err.message : 'Failed to create transfer';
+      } finally {
+        isSubmitting = false;
+      }
+      return;
+    }
+
+    if (!formData.amount) {
+      error = 'Please enter an amount';
       return;
     }
 
@@ -58,15 +115,19 @@
     error = '';
 
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         amount: parseFloat(formData.amount),
         type: formData.type,
-        category: formData.category,
-        mode: formData.mode,
-        source: formData.source,
-        secondPartyId: formData.secondPartyId,
-        notes: formData.notes,
-        tags: formData.tags ? formData.tags.split(',').map(t => t.trim()) : [],
+        direction: formData.direction,
+        mode: formData.mode || 'UPI',
+        source: 'manual',
+        notes: formData.notes || undefined,
+        tags: formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        categoryId: formData.categoryId || undefined,
+        accountId: formData.accountId || undefined,
+        bucketId: formData.bucketId || undefined,
+        merchantId: formData.merchantId || undefined,
+        createdAt: formData.createdAt ? new Date(formData.createdAt).toISOString() : undefined,
       };
 
       if (mode === 'edit' && transaction?.id) {
@@ -77,8 +138,7 @@
 
       dispatch('save');
     } catch (err) {
-      error = 'Failed to create transaction';
-      console.error(err);
+      error = err instanceof Error ? err.message : 'Failed to save transaction';
     } finally {
       isSubmitting = false;
     }
@@ -97,122 +157,154 @@
 
 <svelte:window on:keydown={handleWindowKeydown} />
 
-<div class="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-  <button type="button" class="absolute inset-0 bg-black/50" aria-label="Close modal" on:click={closeModal}></button>
-  <div class="relative z-10 mx-4 w-full max-w-md rounded-xl bg-white shadow-2xl">
-    <!-- Header -->
-    <div class="flex justify-between items-center p-6 border-b border-gray-200">
-      <h2 id="modal-title" class="text-2xl font-bold text-gray-900">{mode === 'edit' ? 'Edit Transaction' : 'Add Transaction'}</h2>
-      <button on:click={closeModal} class="text-gray-500 hover:text-gray-700 text-2xl" aria-label="Close modal">×</button>
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="surface relative z-10 max-h-[90vh] w-full max-w-md overflow-y-auto p-6 shadow-2xl shadow-slate-950/60">
+    <div class="mb-5 flex items-center justify-between gap-4">
+      <div>
+        <p class="text-sm uppercase tracking-[0.25em] text-slate-400">Transactions</p>
+        <h2 id="modal-title" class="text-2xl font-bold text-white">{mode === 'edit' ? 'Edit Transaction' : 'Add Transaction'}</h2>
+      </div>
+      <button on:click={closeModal} class="text-2xl text-slate-400 hover:text-white" aria-label="Close modal">×</button>
     </div>
 
-    <!-- Form -->
-    <form on:submit|preventDefault={handleSubmit} class="p-6 space-y-4">
+    <form on:submit|preventDefault={handleSubmit} class="space-y-4">
       {#if error}
-        <div class="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-          {error}
-        </div>
+        <div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">{error}</div>
       {/if}
 
       <!-- Type -->
       <fieldset>
-        <legend class="block text-sm font-medium text-gray-900 mb-2">Type</legend>
-        <div class="flex gap-4">
-          <label class="flex items-center cursor-pointer">
-            <input type="radio" name="type" value="expense" bind:group={formData.type} class="mr-2" />
-            <span class="text-sm">Expense</span>
-          </label>
-          <label class="flex items-center cursor-pointer">
-            <input type="radio" name="type" value="income" bind:group={formData.type} class="mr-2" />
-            <span class="text-sm">Income</span>
-          </label>
+        <legend class="mb-2 block text-sm font-medium text-slate-300">Type</legend>
+        <div class="flex flex-wrap gap-3">
+          {#each ['expense', 'income', 'transfer', 'refund', 'adjustment'] as type}
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+              <input type="radio" name="type" value={type} bind:group={formData.type} on:change={handleTypeChange} />
+              <span class="capitalize">{type}</span>
+            </label>
+          {/each}
         </div>
       </fieldset>
 
+      <!-- Transfer accounts -->
+      {#if isTransfer}
+        <div>
+          <label for="fromAccountId" class="mb-1 block text-sm font-medium text-slate-300">From account *</label>
+          <select id="fromAccountId" class="input-field" bind:value={formData.fromAccountId}>
+            <option value="">Select account</option>
+            {#each accounts as account}
+              <option value={account.id}>{account.name}{account.institution ? ` (${account.institution})` : ''}</option>
+            {/each}
+          </select>
+        </div>
+        <div>
+          <label for="toAccountId" class="mb-1 block text-sm font-medium text-slate-300">To account *</label>
+          <select id="toAccountId" class="input-field" bind:value={formData.toAccountId}>
+            <option value="">Select account</option>
+            {#each accounts as account}
+              <option value={account.id}>{account.name}{account.institution ? ` (${account.institution})` : ''}</option>
+            {/each}
+          </select>
+        </div>
+      {:else}
+        <!-- Direction -->
+        <fieldset>
+          <legend class="mb-2 block text-sm font-medium text-slate-300">Direction</legend>
+          <div class="flex gap-4">
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+              <input type="radio" name="direction" value="debit" bind:group={formData.direction} />
+              Debit
+            </label>
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+              <input type="radio" name="direction" value="credit" bind:group={formData.direction} />
+              Credit
+            </label>
+          </div>
+        </fieldset>
+      {/if}
+
       <!-- Amount -->
       <div>
-        <label for="amount" class="block text-sm font-medium text-gray-900 mb-1">Amount *</label>
-        <input
-          id="amount"
-          type="number"
-          step="0.01"
-          bind:value={formData.amount}
-          placeholder="0.00"
-          class="input-field"
-          required
-        />
+        <label for="amount" class="mb-1 block text-sm font-medium text-slate-300">Amount *</label>
+        <input id="amount" type="number" step="0.01" bind:value={formData.amount} placeholder="0.00" class="input-field" />
+      </div>
+
+      <!-- Date -->
+      <div>
+        <label for="createdAt" class="mb-1 block text-sm font-medium text-slate-300">Date</label>
+        <input id="createdAt" type="date" bind:value={formData.createdAt} class="input-field" />
       </div>
 
       <!-- Category -->
       <div>
-        <label for="category" class="block text-sm font-medium text-gray-900 mb-1">Category</label>
-        <select bind:value={formData.category} class="input-field">
-          {#each categories as cat}
-            <option value={cat}>{cat}</option>
+        <label for="categoryId" class="mb-1 block text-sm font-medium text-slate-300">Category</label>
+        <select id="categoryId" class="input-field" bind:value={formData.categoryId}>
+          <option value="">Auto-classify</option>
+          {#each categories as category}
+            <option value={category.id}>{category.isSystem ? category.name : `${category.name} (mine)`}</option>
+          {/each}
+        </select>
+      </div>
+
+      <!-- Account -->
+      <div>
+        <label for="accountId" class="mb-1 block text-sm font-medium text-slate-300">Account</label>
+        <select id="accountId" class="input-field" bind:value={formData.accountId}>
+          <option value="">None</option>
+          {#each accounts as account}
+            <option value={account.id}>{account.name}{account.institution ? ` (${account.institution})` : ''}</option>
+          {/each}
+        </select>
+      </div>
+
+      <!-- Merchant -->
+      <div>
+        <label for="merchantId" class="mb-1 block text-sm font-medium text-slate-300">Merchant</label>
+        <select id="merchantId" class="input-field" bind:value={formData.merchantId}>
+          <option value="">None</option>
+          {#each merchants as merchant}
+            <option value={merchant.id}>{merchant.displayName || merchant.canonicalName}</option>
+          {/each}
+        </select>
+      </div>
+
+      <!-- Bucket -->
+      <div>
+        <label for="bucketId" class="mb-1 block text-sm font-medium text-slate-300">Bucket</label>
+        <select id="bucketId" class="input-field" bind:value={formData.bucketId}>
+          <option value="">None</option>
+          {#each buckets as bucket}
+            <option value={bucket.id}>{bucket.name}</option>
           {/each}
         </select>
       </div>
 
       <!-- Mode -->
       <div>
-        <label for="mode" class="block text-sm font-medium text-gray-900 mb-1">Payment Mode</label>
-        <select bind:value={formData.mode} class="input-field">
-          {#each modes as mode}
-            <option value={mode}>{mode}</option>
+        <label for="mode" class="mb-1 block text-sm font-medium text-slate-300">Payment Mode</label>
+        <input id="mode" list="mode-options" class="input-field" bind:value={formData.mode} placeholder="UPI, Card, Cash..." />
+        <datalist id="mode-options">
+          {#each modes as item}
+            <option value={item}></option>
           {/each}
-        </select>
-      </div>
-
-      <!-- Merchant/Party -->
-      <div>
-        <label for="secondPartyId" class="block text-sm font-medium text-gray-900 mb-1">
-          {formData.type === 'expense' ? 'Merchant' : 'Source'} *
-        </label>
-        <input
-          id="secondPartyId"
-          type="text"
-          bind:value={formData.secondPartyId}
-          placeholder={formData.type === 'expense' ? 'e.g., Starbucks' : 'e.g., Salary'}
-          class="input-field"
-          required
-        />
+        </datalist>
       </div>
 
       <!-- Notes -->
       <div>
-        <label for="notes" class="block text-sm font-medium text-gray-900 mb-1">Notes</label>
-        <textarea
-          id="notes"
-          bind:value={formData.notes}
-          placeholder="Add a note..."
-          class="input-field resize-none h-20"
-        ></textarea>
+        <label for="notes" class="mb-1 block text-sm font-medium text-slate-300">Notes</label>
+        <textarea id="notes" bind:value={formData.notes} placeholder="Add a note..." class="input-field h-20 resize-none"></textarea>
       </div>
 
       <!-- Tags -->
       <div>
-        <label for="tags" class="block text-sm font-medium text-gray-900 mb-1">Tags</label>
-        <input
-          id="tags"
-          type="text"
-          bind:value={formData.tags}
-          placeholder="e.g., lunch, office (comma separated)"
-          class="input-field"
-        />
+        <label for="tags" class="mb-1 block text-sm font-medium text-slate-300">Tags</label>
+        <input id="tags" type="text" bind:value={formData.tags} placeholder="e.g., lunch, office (comma separated)" class="input-field" />
       </div>
 
-      <!-- Buttons -->
-      <div class="flex gap-3 mt-6">
-        <button
-          type="button"
-          on:click={closeModal}
-          class="flex-1 btn-secondary"
-          disabled={isSubmitting}
-        >
-          Cancel
-        </button>
-        <button type="submit" class="flex-1 btn-primary" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving...' : mode === 'edit' ? 'Update' : 'Save'}
+      <div class="flex gap-3 pt-2">
+        <button type="button" class="btn-secondary flex-1" on:click={closeModal} disabled={isSubmitting}>Cancel</button>
+        <button type="submit" class="btn-primary flex-1" disabled={isSubmitting}>
+          {isSubmitting ? 'Saving...' : mode === 'edit' ? 'Update' : isTransfer ? 'Transfer' : 'Save'}
         </button>
       </div>
     </form>

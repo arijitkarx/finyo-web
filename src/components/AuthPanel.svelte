@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { authStore, currentViewStore, persistAuthToken } from '$lib/stores';
+  import { authStore, currentViewStore } from '$lib/stores';
+  import { persistAuthTokens } from '$lib/api';
   import type { User } from '$lib/types';
 
 
@@ -54,8 +55,8 @@
         throw new Error(data.message || 'Login failed');
       }
 
-      persistAuthToken(data.token);
-      authStore.set({ token: data.token, user: data.user });
+      persistAuthTokens(data.token, data.refreshToken || null);
+      authStore.set({ token: data.token, user: data.user, isLoggedIn: true });
       loginEmail = '';
       loginPassword = '';
       currentViewStore.set('dashboard');
@@ -88,8 +89,8 @@
       }
 
       if (data.token) {
-        persistAuthToken(data.token);
-        authStore.set({ token: data.token, user: data.user as User });
+        persistAuthTokens(data.token, data.refreshToken || null);
+        authStore.set({ token: data.token, user: data.user as User, isLoggedIn: true });
         currentViewStore.set('dashboard');
       } else {
         currentViewStore.set('login');

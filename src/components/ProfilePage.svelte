@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { authStore, persistAuthToken } from '$lib/stores';
+  import { apiFetch } from '$lib/api';
+  import { authStore, logout } from '$lib/stores';
   import type { User } from '$lib/types';
   import { onMount } from 'svelte';
 
@@ -7,20 +8,9 @@
   let loading = true;
   let error = '';
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-
   onMount(async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/auth/me`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('authToken')}`,
-        },
-        credentials: 'include',
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || 'Unable to load profile');
-      }
+      const data = await apiFetch<{ user: User }>('/api/auth/me');
       profile = data.user;
       authStore.update(current => ({ ...current, user: data.user }));
     } catch (fetchError) {
@@ -30,9 +20,8 @@
     }
   });
 
-  function logout() {
-    authStore.set({ token: null, user: null });
-    persistAuthToken(null);
+  function handleLogout() {
+    logout();
     window.location.reload();
   }
 </script>
@@ -43,7 +32,7 @@
       <p class="text-sm uppercase tracking-[0.3em] text-slate-400">Profile</p>
       <h1 class="text-3xl font-bold text-white sm:text-4xl">Your account</h1>
     </div>
-    <button class="btn-secondary" on:click={logout}>Logout</button>
+    <button class="btn-secondary" on:click={handleLogout}>Logout</button>
   </div>
 
   {#if loading}

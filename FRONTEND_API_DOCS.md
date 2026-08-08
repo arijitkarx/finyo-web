@@ -1,18 +1,29 @@
-# PocketPortrait Backend API Docs (Frontend)
+# Finyo Backend API Docs (Frontend)
+
+Client reference for the **web app** and the **Android app**.
 
 ## Base URL
 
-- Local: `http://localhost:5000`
+- Local dev: `http://localhost:5000`
 - API prefix: `/api`
+- Live/`/health` liveness endpoint (no auth): `GET /health`
 
 ## Auth Model
 
-Protected endpoints require a valid Supabase access token.
+Protected endpoints require a valid **Supabase access token** (JWT).
 
-You can send the token in either way:
+| Client  | Recommended auth method                                             |
+|---------|---------------------------------------------------------------------|
+| Web     | `authToken` httpOnly cookie (set automatically by `/auth/register` and `/auth/login`), `credentials: 'include'` |
+| Android | `Authorization: Bearer <access_token>` header on every request      |
 
-1. `Authorization: Bearer <access_token>` header
-2. `authToken` cookie (set by login/register)
+The access token is returned in the `token` field of register/login responses (same JWT that is also set as a cookie for web).
+
+### Token refresh
+
+- `/auth/login` and `/auth/register` also return `refreshToken`.
+- Refresh is **Supabase-managed**: clients can call Supabase Auth directly (`supabase.auth.refreshSession({ refresh_token })`) with the project URL + anon key, then store the new access token.
+- When the server returns `401`/`403`, refresh and retry once; if refresh fails, redirect to login.
 
 ## Common Response Patterns
 
@@ -21,457 +32,366 @@ You can send the token in either way:
 - `200 OK` for reads/updates/deletes
 - `201 Created` for resource creation
 
-### Error
+### Errors
 
-Most errors return:
+Simple errors:
+
+```json
+{ "message": "Human-readable error message" }
+```
+
+Validation errors (zod) return a structured payload:
 
 ```json
 {
-  "message": "Human-readable error message"
+  "message": "Validation failed",
+  "issues": [
+    { "code": "invalid_value", "values": ["bank", "cash", "wallet"], "path": ["accountType"], "message": "..." }
+  ]
 }
 ```
 
-Common status codes:
-
-- `400` bad input
-- `401` missing auth
-- `403` invalid/expired token
-- `404` not found
-- `500` server/db errors
+Common status codes: `400` bad input, `401` missing auth, `403` invalid/expired token, `404` not found, `409` conflict, `422` unprocessable (e.g. unparseable SMS), `500` server/db errors.
 
 ---
 
-## Health
+## Object Shapes
 
-### GET /health
-
-Check server liveness.
-
-Response:
+### Transaction
 
 ```json
 {
-  "status": "OK",
-  "timestamp": "2026-05-01T09:00:00.000Z"
-}
-```
-
----
-
-## Auth Endpoints
-
-### POST /api/auth/register
-
-Create a new user with Supabase auth and upsert profile row.
-
-Request body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "Test@12345",
-  "username": "optional_username"
-}
-```
-
-Notes:
-
-- `email` and `password` are required.
-- `username` is optional.
-- Depending on Supabase auth settings, `token` can be empty if no session is created immediately.
-
-Success response (`201`):
-
-```json
-{
-  "token": "access_token_or_empty_string",
-  "refreshToken": "refresh_token_if_present",
-  "user": {
-    "id": "uuid",
-    "email": "user@example.com",
-    "username": "optional_username"
-  }
-}
-```
-
-### POST /api/auth/login
-
-Login with email/password.
-
-Request body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "Test@12345"
-}
-```
-
-Success response (`200`):
-
-```json
-{
-  "token": "access_token",
-  "refreshToken": "refresh_token",
-  "user": {
-    "id": "uuid",
-    "email": "user@example.com",
-    "username": "stored_username"
-  }
-}
-```
-
-### GET /api/auth/oauth/:provider
-
-Get OAuth redirect URL.
-
-Path param:
-
-- `provider`: one of `google | github | facebook | apple | discord`
-
-Query params:
-
-- `redirectTo` (optional): callback/redirect URL
-
-Success response (`200`):
-
-```json
-{
-  "url": "https://..."
-}
-```
-
-### POST /api/auth/logout
-
-Clears auth cookies.
-
-Success response (`200`):
-
-```json
-{
-  "message": "Logged out successfully"
-}
-```
-
-### GET /api/auth/me
-
-Get authenticated user profile snapshot.
-
-Auth required: yes
-
-Success response (`200`):
-
-```json
-{
-  "user": {
-    "id": "uuid",
-    "email": "user@example.com",
-    "username": "stored_username"
-  }
-}
-```
-
----
-
-## Transaction Endpoints
-
-Transaction object shape returned by API:
-
-```json
-{
-  "id": 1,
-  "userId": "owner_user_id",
+  "id": 8,
+  "userId": "owner_uuid",
   "from": "from_user_id",
-  "to": "to_user_id_or_null",
+  "to": null,
   "fromUserId": "from_user_id",
-  "toUserId": "to_user_id_or_null",
-  "secondPartyId": "counterparty_or_null",
-  "amount": 499.99,
+  "toUserId": null,
+  "secondPartyId": null,
+  "amount": 350,
   "type": "expense",
+  "transactionType": "expense",
+  "direction": "debit",
+  "mode": "UPI",
+  "source": "sms",
+  "category": "Food",
+  "notes": null,
+  "tags": [],
+  "createdAt": "2026-08-08T10:00:00.000Z",
+  "updatedAt": "2026-08-08T10:00:00.000Z",
+  "date": "2026-08-08T10:00:00.000Z",
+  "accountId": "uuid_or_null",
+  "merchantId": "uuid_or_null",
+  "rawDescription": null,
+  "normalizedDescription": null,
+  "sourceTransactionId": null,
+  "sourceHash": null,
+  "classificationStatus": "classified",
+  "classificationConfidence": 0.98,
+  "metadata": {},
+  "transferId": null
+}
+```
+
+- `type` values: `expense | income | transfer | refund | adjustment`
+- `classificationStatus`: `classified | needs_review | ignored`
+- Transfers always create **two** transactions (one `debit` leg, one `credit` leg) linked by the same `transferId`.
+
+### Account
+
+```json
+{
+  "id": "uuid", "userId": "uuid", "name": "HDFC", "institution": "hdfc",
+  "accountType": "bank", "currency": "INR",
+  "sourceType": "manual", "externalAccountId": null,
+  "currentBalance": 25000, "lastBalanceUpdatedAt": "...Z", "isActive": true,
+  "createdAt": "...Z", "updatedAt": "...Z"
+}
+```
+
+`accountType`: `bank | cash | wallet | card | investment | other`. `sourceType`: `manual | sms | notification | aa | api`.
+
+### Category
+
+```json
+{ "id": "uuid", "userId": null, "parentId": null, "name": "Food", "slug": "food", "icon": "", "isSystem": true, "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+`userId` is `null` for system categories. `parentId` gives a hierarchy (e.g. Fast Food → Food).
+
+### Merchant
+
+```json
+{ "id": "uuid", "canonicalName": "rapido", "displayName": "Rapido", "aliases": ["RAPIDO", "UPI-RAPIDO"], "defaultCategoryId": null, "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+### Bucket
+
+```json
+{ "id": "uuid", "userId": "uuid", "name": "Vacation", "type": "savings", "targetAmount": 50000, "isActive": true, "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+`type`: `spending | sinking_fund | reserved | savings | earmarked`.
+
+### Bucket allocation
+
+```json
+{ "id": 1, "userId": "uuid", "bucketId": "uuid", "amount": 5000, "allocationType": "funding", "referenceType": null, "referenceId": null, "occurredAt": "...Z", "createdAt": "...Z" }
+```
+
+`allocationType`: `funding | spending | release | adjustment | transfer`. Bucket balance is **derived from the ledger** (funding − spending + release + adjustment) — there is no stored balance.
+
+### Budget plan
+
+```json
+{ "id": "uuid", "userId": "uuid", "name": "Food budget", "categoryId": null, "category": null, "bucketId": null, "periodType": "monthly", "limitAmount": 8000, "startDate": null, "endDate": null, "rolloverEnabled": false, "isActive": true, "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+`periodType`: `weekly | monthly | quarterly | yearly | custom`. Spend is derived from the transaction ledger, never stored.
+
+### Rule
+
+```json
+{ "id": "uuid", "userId": "uuid", "priority": 100, "enabled": true, "matchType": "merchant", "matchOperator": "equals", "matchValue": "swiggy", "actionType": "category", "actionValue": "food", "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+`matchType`: `merchant | description | amount | account | mode`; `matchOperator`: `equals | contains | starts_with | regex`; `actionType`: `category | bucket | ignore`.
+
+### Recurring plan (sinking fund)
+
+```json
+{ "id": "uuid", "userId": "uuid", "name": "Mobile Recharge", "amount": 900, "frequency": "quarterly", "nextDueDate": "2026-10-01", "bucketId": "uuid", "autoFundAmount": 300, "fundingFrequency": "monthly", "lastFundingDate": null, "merchantId": null, "isActive": true, "createdAt": "...Z", "updatedAt": "...Z" }
+```
+
+`frequency`/`fundingFrequency`: `weekly | monthly | quarterly | yearly`. Auto-funding creates `funding` allocations in the linked bucket on each funding boundary before the due date (e.g. ₹300/mo → ₹900 quarterly = ₹600 funded, ₹300 remaining before due).
+
+---
+
+## Endpoint Reference
+
+### Health
+
+| Method | Path      | Auth | Description |
+|--------|-----------|------|-------------|
+| GET    | `/health` | no   | `{status, timestamp}` |
+
+### Auth — `/api/auth`
+
+| Method | Path              | Auth | Description |
+|--------|-------------------|------|-------------|
+| POST   | `/register`       | no   | `{email, password, username?}` → `201` `{token, refreshToken, user}` + sets cookies |
+| POST   | `/login`          | no   | `{email, password}` → `200` `{token, refreshToken, user}` + sets cookies |
+| GET    | `/oauth/:provider`| no   | `{url}` OAuth redirect URL. `provider`: `google | github | facebook | apple | discord`. Query `redirectTo?` |
+| POST   | `/logout`         | no   | Clears auth cookies → `{message}` |
+| GET    | `/me`             | yes  | `{user: {id, email, username}}` |
+
+### Accounts — `/api/accounts`
+
+| Method | Path       | Auth | Description |
+|--------|------------|------|-------------|
+| GET    | `/`        | yes  | List accounts |
+| POST   | `/`        | yes  | Create: `{name, institution?, accountType? (bank), currency? (INR), sourceType? (manual), externalAccountId?, currentBalance?}` → `201` |
+| GET    | `/:id`     | yes  | Get account |
+| PUT    | `/:id`     | yes  | Partial update (any create field) |
+| DELETE | `/:id`     | yes  | Delete → `{message}` |
+
+### Categories — `/api/categories`
+
+| Method | Path   | Auth | Description |
+|--------|--------|------|-------------|
+| GET    | `/`    | yes  | All categories (system + user), hierarchical via `parentId` |
+| POST   | `/`    | yes  | Create: `{name, slug?, icon?, parentId?}` |
+| PUT    | `/:id` | yes  | Update (name/slug/icon/parentId) |
+| DELETE | `/:id` | yes  | Delete |
+
+### Merchants — `/api/merchants`
+
+| Method | Path   | Auth | Description |
+|--------|--------|------|-------------|
+| GET    | `/`    | yes  | List all merchants |
+| POST   | `/`    | yes  | Create: `{canonicalName, displayName, aliases?, defaultCategoryId?}` (`409` if canonical name exists) |
+| GET    | `/:id` | yes  | Get |
+| PUT    | `/:id` | yes  | Update |
+| DELETE | `/:id` | yes  | Delete |
+
+### Transactions — `/api/transactions`
+
+| Method | Path                 | Auth | Description |
+|--------|----------------------|------|-------------|
+| GET    | `/`                  | yes  | Latest up to 100 transactions (array) |
+| GET    | `/transactions`      | yes  | Paginated + filtered. Query: `page` (1), `limit` (10, max 500), `startDate?`, `endDate?` (normalized to end-of-day), `tags?` (comma-separated), `match?` (`any`\|`all`) → `{transactions, pagination}` |
+| GET    | `/filter/tags`       | yes  | Tag filter → `{tags, match, transactions}` (limit 500) |
+| GET    | `/dashboard`         | yes  | Current-month + 6-month analytics (see below) |
+| POST   | `/`                  | yes  | Create (see below) → `201` transaction |
+| POST   | `/transfer`          | yes  | Account-to-account transfer (see below) → `201` `{from, to}` |
+| GET    | `/:id`               | yes  | Get transaction |
+| PUT    | `/:id`               | yes  | Partial update: `amount?, type?, mode?, source?, tags?, category?, notes?, createdAt?, accountId?, merchantId?` |
+| DELETE | `/:id`               | yes  | Delete → `{message}` |
+
+**Create body** (only `amount` + `type` are required):
+
+```json
+{
+  "amount": 450,
+  "type": "expense",
+  "direction": "debit",
   "mode": "UPI",
   "source": "manual",
+  "tags": ["lunch"],
   "category": "Food",
-  "notes": "optional",
-  "tags": ["lunch", "office"],
-  "createdAt": "2026-05-01T09:00:00.000Z",
-  "updatedAt": "2026-05-01T09:00:00.000Z",
-  "date": "2026-05-01T09:00:00.000Z"
-}
-```
-
-### GET /api/transactions
-
-Get latest transactions for current user (up to 100).
-
-Auth required: yes
-
-Response (`200`):
-
-```json
-[
-  {
-    "id": 1,
-    "amount": 499.99,
-    "type": "expense"
-  }
-]
-```
-
-### GET /api/transactions/transactions
-
-Paginated list + optional date filtering.
-
-Auth required: yes
-
-Query params:
-
-- `page` (default `1`)
-- `limit` (default `10`)
-- `startDate` (optional, any JS-parseable date)
-- `endDate` (optional, any JS-parseable date; server normalizes to end-of-day)
-
-Response (`200`):
-
-```json
-{
-  "transactions": [],
-  "pagination": {
-    "currentPage": 1,
-    "totalPages": 0,
-    "totalItems": 0,
-    "itemsPerPage": 10,
-    "hasNext": false,
-    "hasPrev": false
-  }
-}
-```
-
-### GET /api/transactions/filter/tags
-
-Filter transactions by tags.
-
-Auth required: yes
-
-Query params:
-
-- `tags` required for meaningful filtering
-  - supports comma-separated string, for example `tags=food,office`
-- `match` optional: `any` (default) or `all`
-
-Response (`200`):
-
-```json
-{
-  "tags": ["food", "office"],
-  "match": "all",
-  "transactions": []
-}
-```
-
-### POST /api/transactions
-
-Create transaction.
-
-Auth required: yes
-
-Request body:
-
-```json
-{
-  "amount": 499.99,
-  "type": "expense",
-  "mode": "UPI",
-  "source": "manual",
-  "secondPartyId": "merchant-001",
-  "tags": ["lunch", "office"],
-  "category": "Food",
+  "categoryId": "uuid",
+  "bucketId": "uuid",
+  "merchantId": "uuid",
+  "accountId": "uuid",
+  "secondPartyId": "counterparty",
   "notes": "Team lunch",
-  "createdAt": "2026-05-01T09:00:00.000Z"
+  "createdAt": "2026-08-08T09:00:00.000Z",
+  "rawDescription": "UPI/DR/.../SWIGGY",
+  "metadata": {}
 }
 ```
 
-Validation rules:
+- Classification (category/bucket) is automatic when `categoryId`/`bucketId` are omitted — rules + merchant defaults apply.
 
-- required: `amount`, `type`, `mode`, `source`, `secondPartyId`
-- `type` must be `expense` or `income`
-- `createdAt` must be valid date if provided
+**Transfer body:**
 
-Response (`201`): transaction object (same shape as above).
+```json
+{ "fromAccountId": "uuid", "toAccountId": "uuid", "amount": 2000, "occurredAt": "...Z", "notes": "...", "source": "manual" }
+```
 
-### PUT /api/transactions/:id
+- `fromAccountId` and `toAccountId` must differ. Creates two transactions (`type: transfer`, one debit + one credit). Transfers never count as income/expense.
 
-Update transaction (partial update).
-
-Auth required: yes
-
-Path params:
-
-- `id` (transaction id)
-
-Request body (all optional):
+**Dashboard payload** (`GET /dashboard`):
 
 ```json
 {
-  "amount": 550,
-  "type": "expense",
-  "mode": "Card",
-  "source": "manual",
-  "secondPartyId": "merchant-002",
-  "tags": ["client"],
-  "category": "Food",
-  "notes": "Updated note",
-  "createdAt": "2026-05-01T09:30:00.000Z"
+  "totalSpent": 800, "totalIncome": 50000, "netAmount": 49200, "savingsRate": 98.4,
+  "topCategory": "Food", "topExpenseCategory": "Food", "topIncomeCategory": "",
+  "categoryData": {}, "expenseCategoryData": { "Food": 450 }, "incomeCategoryData": {},
+  "topPaymentMethods": ["UPI"], "paymentMethodData": { "UPI": 3 },
+  "monthlyData": [ { "month": "Aug 2026", "amount": 0, "expenses": 800, "income": 50000, "net": 49200 } ],
+  "totalTransactions": 8, "expenseCount": 4, "incomeCount": 1, "avgExpense": 200, "avgIncome": 50000
 }
 ```
 
-Response (`200`): updated transaction object.
+### Buckets — `/api/buckets`
 
-Possible errors:
+| Method | Path                   | Auth | Description |
+|--------|------------------------|------|-------------|
+| GET    | `/`                    | yes  | List buckets |
+| POST   | `/`                    | yes  | Create: `{name, type? (spending), targetAmount?}` |
+| GET    | `/:id`                 | yes  | Get bucket |
+| PUT    | `/:id`                 | yes  | Update: `name?, type?, targetAmount?, isActive?` |
+| DELETE | `/:id`                 | yes  | Delete |
+| GET    | `/:id/balance`         | yes  | Derived balance `{bucketId, balance}` |
+| GET    | `/:id/allocations`     | yes  | Ledger entries for the bucket |
+| POST   | `/:id/allocations`     | yes  | Add allocation: `{amount, allocationType, referenceType?, referenceId?, occurredAt?}` |
 
-- `404` if transaction does not exist or not owned by user
-- `400` if `createdAt` invalid
+### Budgets — `/api/budgets`
 
-### DELETE /api/transactions/:id
+| Method | Path       | Auth | Description |
+|--------|------------|------|-------------|
+| GET    | `/`        | yes  | Legacy monthly category budgets (list) |
+| POST   | `/`        | yes  | Legacy upsert: `{category, limitAmount}` for current month |
+| GET    | `/alerts`  | yes  | Plans ≥80% spent → `{category, percentage, spent, limit, severity: "medium"|"high"}` |
+| GET    | `/summary` | yes  | `{id, name, category, categoryId, bucketId, limit, spent, remaining, percentage}` per plan |
+| POST   | `/plans`   | yes  | Create plan: `{name, categoryId?, bucketId?, periodType? (monthly), limitAmount, startDate?, endDate?, rolloverEnabled?}` |
+| GET    | `/:id`     | yes  | Get plan |
+| PUT    | `/:id`     | yes  | Update plan (+`isActive?`) |
+| DELETE | `/:id`     | yes  | Delete plan |
 
-Delete transaction.
+### Rules — `/api/rules`
 
-Auth required: yes
+| Method | Path          | Auth | Description |
+|--------|---------------|------|-------------|
+| GET    | `/`           | yes  | User's rules |
+| POST   | `/`           | yes  | Create: `{priority? (100), enabled? (true), matchType, matchOperator, matchValue, actionType, actionValue?}` |
+| GET    | `/:id`        | yes  | Get rule |
+| PUT    | `/:id`        | yes  | Update |
+| DELETE | `/:id`        | yes  | Delete |
+| POST   | `/:id/test`   | yes  | Dry-run match: body `{merchantName?, description?, amount?, accountId?, mode?}` → `{matches: boolean}` |
 
-Path params:
+### Recurring plans (sinking funds) — `/api/recurring`
 
-- `id` (transaction id)
+| Method | Path           | Auth | Description |
+|--------|----------------|------|-------------|
+| GET    | `/`            | yes  | List plans |
+| POST   | `/`            | yes  | Create: `{name, amount, frequency, nextDueDate (YYYY-MM-DD), bucketId?, autoFundAmount?, fundingFrequency?, merchantId?}` |
+| POST   | `/auto-fund`   | yes  | Run funding: creates `funding` allocations for all due boundaries → `{funded: n}` (idempotent) |
+| GET    | `/upcoming`    | yes  | `[{name, amount, dueDate, funded, remainingFunding}]` |
+| GET    | `/:id`         | yes  | Get plan |
+| PUT    | `/:id`         | yes  | Update (all fields optional, `bucketId`/`fundingFrequency`/`merchantId` accept `null`, +`isActive?`) |
+| DELETE | `/:id`         | yes  | Delete |
 
-Response (`200`):
+### Classification (user corrections) — `/api/classification`
+
+| Method | Path                  | Auth | Description |
+|--------|-----------------------|------|-------------|
+| PATCH  | `/:transactionId`     | yes  | Correct classification: `{categoryId?, bucketId?, applyToFuture?}` → `{transaction}` (with `rule` if `applyToFuture` created one) |
+| POST   | `/:transactionId/rule`| yes  | Create a persistent rule from a transaction: `{categoryId, bucketId?}` → `201` rule |
+
+`applyToFuture` creates `merchant equals <canonical_name>` if the transaction has a merchant, otherwise `description contains <normalized_description>`, actioning the category/bucket.
+
+### Financial state — `/api/financial`
+
+| Method | Path              | Auth | Description |
+|--------|-------------------|------|-------------|
+| GET    | `/safe-to-spend`  | yes  | `{safeToSpend, currency, components: {availableCash, reservedMoney, earmarkedMoney, upcomingRequiredExpenses, protectedSavings}}` |
+| GET    | `/daily-allowance`| yes  | `{overall, categories: {<plan name>: amount}}` |
+| GET    | `/upcoming`       | yes  | Same as `/api/recurring/upcoming` |
+
+`safeToSpend = availableCash − reservedMoney − earmarkedMoney − upcomingRequiredExpenses − protectedSavings` (deterministic, derived from the ledger).
+
+### Ingestion — `/api/ingestion`
+
+| Method | Path     | Auth | Description |
+|--------|----------|------|-------------|
+| POST   | `/events`| yes  | Ingest a raw event (see below) → `201` |
+| GET    | `/status`| yes  | `{counts: {received, processed, duplicate, failed}, events: [...]}` (latest 50) |
+
+**POST `/events` body:**
 
 ```json
 {
-  "message": "Transaction deleted successfully"
+  "source": "sms",
+  "accountId": "uuid",
+  "rawText": "Rs 147 debited from A/c XX1234 via UPI-RAPIDO",
+  "occurredAt": "2026-08-08T12:30:00Z",
+  "externalEventId": "optional_provider_event_id"
 }
 ```
 
-### GET /api/transactions/dashboard
+`source`: `sms | notification | email | csv | manual | aa`. Responses:
 
-Aggregated dashboard stats for current month + 6-month trend.
+- `{"status": "processed", "eventId": 1, "transaction": {...}}` — transaction created (and classified)
+- `{"status": "duplicate", "eventId": 1, "transactionId": 8}` — same event or same transaction already seen
+- `422` `{"message": "Unable to parse SMS: ..."}` for unparseable `rawText`
 
-Auth required: yes
-
-Response (`200`):
-
-```json
-{
-  "totalSpent": 12000,
-  "totalIncome": 35000,
-  "netAmount": 23000,
-  "savingsRate": 65.71,
-  "topCategory": "Food",
-  "topExpenseCategory": "Food",
-  "topIncomeCategory": "Salary",
-  "categoryData": { "Food": 6000 },
-  "expenseCategoryData": { "Food": 6000 },
-  "incomeCategoryData": { "Salary": 35000 },
-  "topPaymentMethods": ["UPI", "Card"],
-  "paymentMethodData": { "UPI": 8, "Card": 3 },
-  "monthlyData": [
-    {
-      "month": "Jan 2026",
-      "amount": 5000,
-      "expenses": 5000,
-      "income": 20000,
-      "net": 15000
-    }
-  ],
-  "totalTransactions": 11,
-  "expenseCount": 8,
-  "incomeCount": 3,
-  "avgExpense": 625,
-  "avgIncome": 11666.67
-}
-```
+Deduplication is automatic (SHA-256 fingerprint; unique per user).
 
 ---
 
-## Budget Endpoints
+## Frontend / Android Integration Notes
 
-Budget object shape returned by API:
+### Web app
+- Send `credentials: 'include'` so the `authToken` cookie is attached; CORS is restricted to `FRONTEND_URL` (`http://localhost:3000` in dev).
+- After login/register the server sets `authToken`, `refreshToken`, `isLoggedIn` cookies. `isLoggedIn` is non-httpOnly — use it to flip UI state.
+- A `401`/`403` means the token expired: refresh via Supabase Auth and retry.
 
-```json
-{
-  "id": 1,
-  "userId": "uuid",
-  "category": "Food",
-  "limitAmount": 5000,
-  "currentSpent": 1200,
-  "month": "2026-05",
-  "year": 2026,
-  "createdAt": "2026-05-01T09:00:00.000Z",
-  "updatedAt": "2026-05-01T09:00:00.000Z"
-}
-```
+### Android app
+- Stack suggestion: Kotlin + Retrofit/OkHttp + `kotlinx.serialization` (or Moshi). Add an OkHttp `Interceptor` that attaches `Authorization: Bearer <token>` and handles 401-refresh-once-and-retry.
+- Store tokens in EncryptedSharedPreferences / Android Keystore. Do **not** log tokens.
+- Parse `issues` in validation errors to show inline field errors.
+- Core screens → endpoints:
+  - Home/safe-to-spend → `GET /api/financial/safe-to-spend`, `GET /api/financial/daily-allowance`
+  - Transactions → `GET /api/transactions/transactions` (paged), `POST /api/transactions`, `POST /api/transactions/transfer`
+  - Buckets → `/api/buckets` + `POST /api/buckets/:id/allocations`
+  - Recurring/sinking funds → `/api/recurring` + `POST /api/recurring/auto-fund` (or a future background worker)
+  - Rules → `/api/rules`, corrections → `PATCH /api/classification/:transactionId`
+  - SMS forwarding (background): forward notification text to `POST /api/ingestion/events` with `source: "sms"` + the user's account id; the server dedupes.
+- Numbers (amounts, balances) come back as JSON numbers — use `Double`/`BigDecimal` and format with `₹`.
 
-### GET /api/budgets
-
-Get budgets for current month.
-
-Auth required: yes
-
-Response (`200`):
-
-```json
-[]
-```
-
-### POST /api/budgets
- 
-Create or update budget for current month/category.
-
-Auth required: yes
-
-Request body:
-
-```json
-{
-  "category": "Food",
-  "limitAmount": 5000
-}
-```
-
-Validation rules:
-
-- required: `category`, `limitAmount`
-
-Response (`200`): budget object.
-
-### GET /api/budgets/alerts
-
-Get budget alerts for categories crossing 80% spend.
-
-Auth required: yes
-
-Response (`200`):
-
-```json
-[
-  {
-    "category": "Food",
-    "percentage": 92,
-    "spent": 4600,
-    "limit": 5000,
-    "severity": "medium"
-  }
-]
-```
-
-Severity behavior:
-
-- `high` when spent >= limit
-- `medium` when percentage >= 80 and spent < limit
-
----
-
-## Frontend Integration Notes
-
-- Always handle `message` in non-2xx responses and show a user-friendly fallback.
-- Prefer header-based auth (`Authorization: Bearer <token>`) for mobile/web clients unless cookie flow is intentional.
-- Keep token refresh strategy on frontend if session expiration is expected.
-- For transaction creation/update, keep `secondPartyId` in your form model.
-- For tags filter, send comma-separated values in query for simplicity.
+### General
+- Always handle `message` in non-2xx responses.
+- Use `createdAt`/`date` from the server as the canonical transaction date.
+- `categoryId`/`bucketId` (uuid) are preferred over legacy `category` string for new writes; the legacy string is auto-set from the category hierarchy.
